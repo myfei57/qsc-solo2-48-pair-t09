@@ -132,3 +132,16 @@ def test_console_api_wraps_zone_and_calibration_actions(platform):
     assert calibrated["result"]["fresh"] is True
     cleared = api.clear_furnace({})
     assert cleared["result"]["charger"]["interrupted"] is True
+
+
+def test_scale_drift_endpoint_reports_assessment(console, platform):
+    _server, base = console
+    platform.recalibrate_scale(1.0)
+    raw = platform.config.batch.charge_batch_kg + platform.scale.offset_kg + 3.0
+    for _ in range(6):
+        platform.scale.weigh(raw)
+    status, payload = _get(f"{base}/api/scale/drift")
+    assert status == 200
+    assert payload["assessment"]["drifting"] is True
+    assert payload["assessment"]["suggested_offset_kg"] == pytest.approx(4.0)
+    assert payload["warned"] is True

@@ -2,8 +2,9 @@
 
 ``Platform`` 把各组件按真实调用链接起来，并暴露四件事：启动
 顺序、停炉顺序、控制循环和状态快照。控制循环每个周期做六件事：按负荷与
-拉引量调整液面并按液面门控投料、按投料秤基线折算配比、维持燃烧与分区、
-按稳温结论决定闸板、走一遍成型循环、最后按退火曲线结算网带与加热功率。
+拉引量调整液面并按液面门控投料、按投料秤基线折算配比（基线超期或与现场
+对不上时门控拒绝）、维持燃烧与分区、按稳温结论决定闸板、走一遍成型循环、
+最后按退火曲线结算网带与加热功率。
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from dataclasses import dataclass
 from .audit.log import AuditLog
 from .audit.record import AuditRecord
 from .batch.charge import Charger
+from .batch.drift import ScaleDriftMonitor
 from .batch.scale import BatchScale
 from .burner.air import CombustionAir
 from .burner.draft import air_closed_before_draft_stop, close_combustion_air
@@ -140,7 +142,6 @@ class Platform:
 
         self.level = GlassLevel(self.clock, self.bus, self.config.furnace)
         self.furnace_temp = FurnaceTemperature(self.bus, self.config.furnace)
-        self.mix = MixPlanner(self.bus, self.config.batch)
         self.draft = DraftFan(self.bus, self.config.furnace)
         self.gas = GasValve(self.bus, self.config.burner.gas_max_m3_h)
         self.air = CombustionAir(self.clock, self.bus, self.config.burner)
@@ -148,6 +149,8 @@ class Platform:
         self.zones = ZoneMap(self.bus, self.config.burner)
 
         self.scale = BatchScale(self.bus, store, self.config.batch)
+        self.scale_watch = ScaleDriftMonitor(self.bus, self.clock, self.config.batch, self.scale)
+        self.mix = MixPlanner(self.bus, self.config.batch, self.scale_watch)
         self.charger = Charger(self.bus, self.config.batch)
 
         self.stability = StabilityMonitor(self.clock, self.bus, self.config.forehearth)
@@ -349,6 +352,7 @@ class Platform:
             self.trend.append("level_mm", moment, self.level.level_mm)
             self.trend.append("forehearth_temp", moment, self.forehearth_temp.temperature_c)
             self.trend.append("gob_mass_g", moment, gob.mass_g)
+            self.trend.append("scale_drift_kg", moment, self.scale_watch.assess().drift_kg)
             self.trend.append("belt_speed", moment, anneal["belt"]["speed_m_per_min"])
             self.trend.append("heater_power_pct", moment, anneal["heater"]["power_pct"])
 
@@ -489,6 +493,11 @@ class Platform:
                 "fresh": self.mix.matches(plan, self.scale.baseline()),
             }
 
+    def scale_drift_report(self) -> dict:
+        """投料秤漂移评估：最近几批观测偏移、建议标定值与标定状态。"""
+
+        return self.scale_watch.snapshot()
+
     def rebuild_zone_map(self, assignments: dict, reason: str = "窑体大修") -> dict:
         """窑体大修后重建分区映射。"""
 
@@ -577,6 +586,7 @@ class Platform:
             "started": self._started,
             "level": self.level.snapshot(),
             "scale_durable": self.scale.is_durable(),
+            "scale_watch": self.scale_watch.snapshot(),
             "draft_negative": self.draft.is_negative(),
             "air_established": self.air.is_established(),
             "melt_temp_ok": self.furnace_temp.is_ok(),
@@ -636,6 +646,7 @@ class Platform:
                 "/api/mold/blow",
                 "/api/lehr/reset",
                 "/api/scale/calibrate",
+                "/api/scale/drift",
                 "/api/furnace/clear",
                 "/api/furnace/rebuild",
                 "/api/cycle",
@@ -677,6 +688,7 @@ class Platform:
             "zones": self.zones.snapshot(),
             "trip": self.trip.snapshot(),
             "scale": self.scale.snapshot(),
+            "scale_watch": self.scale_watch.snapshot(),
             "charger": self.charger.snapshot(),
             "stability": self.stability.snapshot(),
             "forehearth": self.forehearth_temp.snapshot(),

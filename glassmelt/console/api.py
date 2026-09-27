@@ -124,6 +124,11 @@ class ConsoleAPI:
         offset = float(payload.get("offset_kg", 0.0))
         return self._guard(lambda: self.platform.recalibrate_scale(offset))
 
+    def scale_drift(self) -> dict:
+        """投料秤漂移评估：最近几批观测偏移、建议标定值与标定状态。"""
+
+        return self.platform.scale_drift_report()
+
     def keep_alive(self, payload: dict) -> dict:
         """推进一个控制周期；缺省工况按 85% 熔制负荷取。"""
 

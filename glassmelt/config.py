@@ -2,8 +2,9 @@
 
 配置来自 YAML（由 vendored PyYAML 解析），覆盖玻璃液面带、熔化温度区间、
 助燃风与燃气上限、供料道稳温带与保持时间、退火告警阈值、料滴质量公差、
-合模力下限、网带快慢速与投料秤标定范围。任何缺失或越界取值都在装配阶段
-抛出 :class:`ConfigError`，不允许带着半份配置启动控制链。
+合模力下限、网带快慢速、投料秤标定范围、标定有效期与漂移提醒阈值。任何
+缺失或越界取值都在装配阶段抛出 :class:`ConfigError`，不允许带着半份配置
+启动控制链。
 """
 
 from __future__ import annotations
@@ -296,12 +297,15 @@ class LehrLimits:
 
 @dataclass(frozen=True)
 class BatchLimits:
-    """投料与配比约束。"""
+    """投料、配比与投料秤标定约束。"""
 
     charge_batch_kg: float
     scale_offset_max_kg: float
     mix_tolerance_pct: float
     charge_window_s: float
+    calibration_max_age_s: float
+    drift_warn_kg: float
+    drift_window_batches: int
 
     @classmethod
     def from_mapping(cls, section: Mapping[str, Any]) -> "BatchLimits":
@@ -310,9 +314,18 @@ class BatchLimits:
             scale_offset_max_kg=_number(section, "scale_offset_max_kg", minimum=0.0),
             mix_tolerance_pct=_number(section, "mix_tolerance_pct", minimum=0.0),
             charge_window_s=_number(section, "charge_window_s", minimum=0.0),
+            calibration_max_age_s=_number(section, "calibration_max_age_s", minimum=0.0),
+            drift_warn_kg=_number(section, "drift_warn_kg", minimum=0.0),
+            drift_window_batches=int(_number(section, "drift_window_batches", minimum=2.0)),
         )
         if limits.charge_batch_kg <= 0:
             raise ConfigError("单次投料量必须为正", component="config")
+        if limits.calibration_max_age_s <= 0:
+            raise ConfigError("标定有效期必须为正", component="config")
+        if limits.drift_warn_kg <= 0:
+            raise ConfigError("漂移提醒阈值必须为正", component="config")
+        if limits.drift_warn_kg > limits.scale_offset_max_kg:
+            raise ConfigError("漂移提醒阈值不能大于标定偏移上限", component="config")
         return limits
 
     def offset_ok(self, offset_kg: float) -> bool:
@@ -324,6 +337,11 @@ class BatchLimits:
         """配比偏差是否在公差内。"""
 
         return abs(float(deviation_pct)) <= self.mix_tolerance_pct
+
+    def drift_ok(self, drift_kg: float) -> bool:
+        """观测偏移与基线的偏差是否还在漂移提醒阈值内。"""
+
+        return abs(float(drift_kg)) <= self.drift_warn_kg
 
 
 @dataclass(frozen=True)
@@ -450,6 +468,9 @@ def default_config() -> PlatformConfig:
             scale_offset_max_kg=12.0,
             mix_tolerance_pct=1.5,
             charge_window_s=180.0,
+            calibration_max_age_s=604800.0,
+            drift_warn_kg=2.0,
+            drift_window_batches=8,
         ),
         pages=("overview", "operations", "records"),
     )
@@ -516,6 +537,9 @@ def config_to_mapping(cfg: PlatformConfig) -> dict:
                 "scale_offset_max_kg": cfg.batch.scale_offset_max_kg,
                 "mix_tolerance_pct": cfg.batch.mix_tolerance_pct,
                 "charge_window_s": cfg.batch.charge_window_s,
+                "calibration_max_age_s": cfg.batch.calibration_max_age_s,
+                "drift_warn_kg": cfg.batch.drift_warn_kg,
+                "drift_window_batches": cfg.batch.drift_window_batches,
             },
         },
         "pages": list(cfg.pages),

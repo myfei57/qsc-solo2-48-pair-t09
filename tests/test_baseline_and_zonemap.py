@@ -28,6 +28,7 @@ def test_scale_offset_beyond_limit_is_rejected(platform):
 
 
 def test_mix_plan_uses_the_current_baseline(platform):
+    platform.scale.recalibrate(2.0, platform.clock.now())
     old = platform.scale.baseline()
     epoch_before = platform.scale.epoch
     stale_plan = platform.mix.plan(old)
@@ -41,6 +42,8 @@ def test_mix_plan_uses_the_current_baseline(platform):
     assert fresh_plan.mix_total_kg == pytest.approx(
         platform.config.batch.charge_batch_kg + 6.0
     )
+    with pytest.raises(InterlockError):
+        platform.mix.plan(old)
 
 
 def test_recalibration_probe_reports_the_fresh_plan(platform):
@@ -51,6 +54,7 @@ def test_recalibration_probe_reports_the_fresh_plan(platform):
 
 
 def test_mix_planner_tolerance_flag(platform):
+    platform.scale.recalibrate(0.0, platform.clock.now())
     plan = platform.mix.plan(platform.scale.baseline())
     assert platform.mix.tolerance_ok(plan) is True
     platform.scale.recalibrate(platform.config.batch.scale_offset_max_kg, platform.clock.now())

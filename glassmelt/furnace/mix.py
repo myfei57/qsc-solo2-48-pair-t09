@@ -3,6 +3,8 @@
 生料配比按投料秤的当前标定基线折算：秤的标定偏移一变，配比必须跟着变，
 否则料方长期按老偏移配料，窑内玻璃成分漂移、析晶发白。所以配比计划里要
 带上它用的基线代次，装配与控制台都按代次核对"这一批是不是按最新基线算的"。
+基线本身不可信时（标定超期、与落盘内容对不上、或拿的不是当前代次），
+折算直接被门控拒绝——宁可停料，也不按一份对不上现场的基线配料。
 """
 
 from __future__ import annotations
@@ -35,17 +37,19 @@ class MixPlan:
 
 
 class MixPlanner:
-    """按投料秤基线折算配比。"""
+    """按投料秤基线折算配比；``guard`` 在每次折算前校验基线可信度。"""
 
-    def __init__(self, bus: EventBus, limits: BatchLimits) -> None:
+    def __init__(self, bus: EventBus, limits: BatchLimits, guard) -> None:
         self._bus = bus
         self._limits = limits
+        self._guard = guard
         self._plans = 0
         self._lock = threading.RLock()
 
     def plan(self, baseline) -> MixPlan:
-        """按给定基线折算一批配比。"""
+        """按给定基线折算一批配比；基线不可信时门控拒绝。"""
 
+        self._guard.require_fresh(baseline)
         batch_kg = self._limits.charge_batch_kg
         offset_kg = float(baseline.offset_kg)
         epoch = int(baseline.epoch)

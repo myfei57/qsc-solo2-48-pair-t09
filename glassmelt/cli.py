@@ -4,8 +4,8 @@
 
 ``serve``   启动控制台 HTTP 服务，可选地在启动后探测页面；
 ``demo``    在本地跑一遍完整流程（启动顺序 → 控制周期 → 投料恢复 → 点火 →
-            分区大修与跳闸 → 秤标定 → 清炉 → 退火复位 → 停炉顺序），用于
-            交付前的真实运行检查；
+            分区大修与跳闸 → 秤标定与漂移监视 → 清炉 → 退火复位 → 停炉顺序），
+            用于交付前的真实运行检查；
 ``status``  打印当前状态快照；
 ``config``  打印生效配置；
 ``reset``   清掉落盘的投料秤标定基线。
@@ -93,6 +93,14 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     trip = platform.trip_burner("zone-3", "演示用窑温越限")
     trip_reset = platform.reset_trip()
     calibration = platform.recalibrate_scale(4.5)
+    # 漂移监视演示：标定后秤的物理零点继续爬移 3 kg，连续几批称量读数都带上
+    # 这一爬移；监视层应发觉漂移并给出建议标定值，随后按建议值重新标定。
+    for _ in range(6):
+        platform.scale.weigh(config.batch.charge_batch_kg + 4.5 + 3.0)
+    drift_watch = platform.scale_drift_report()
+    drift_recalibration = platform.recalibrate_scale(
+        drift_watch["assessment"]["suggested_offset_kg"]
+    )
     cleared = platform.clear_furnace("演示用出料")
     platform.level.observe(config.furnace.level_target_mm - 18.0)
     restored = platform.start_charging(path="resume")
@@ -115,6 +123,8 @@ def _cmd_demo(args: argparse.Namespace) -> int:
         "trip": trip,
         "trip_reset": trip_reset,
         "calibration": calibration,
+        "drift_watch": drift_watch,
+        "drift_recalibration": drift_recalibration,
         "cleared": cleared,
         "charged_after_clear": restored,
         "anneal_excursion": anneal_excursion,

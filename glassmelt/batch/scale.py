@@ -102,9 +102,16 @@ class BatchScale:
         )
         return baseline
 
-    def weigh(self, raw_kg: float) -> float:
-        """按当前偏移把秤的读数折算成真实质量。"""
+    def weigh(self, raw_kg: float, reference_kg: float | None = None) -> float:
+        """按当前偏移把秤的读数折算成真实质量。
 
+        ``reference_kg`` 是这批物料的约定真值（缺省取单批投料量）；漂移监视
+        按"读数 − 约定真值"积累观测偏移，判断秤的物理零点是否还在基线上。
+        """
+
+        reference = (
+            self._limits.charge_batch_kg if reference_kg is None else float(reference_kg)
+        )
         with self._lock:
             self._weighings += 1
             true_kg = float(raw_kg) - self._offset_kg
@@ -116,6 +123,7 @@ class BatchScale:
                 subject="batch_scale",
                 raw_kg=round(float(raw_kg), 3),
                 true_kg=round(true_kg, 3),
+                reference_kg=round(reference, 3),
                 epoch=self.epoch,
             )
         )
