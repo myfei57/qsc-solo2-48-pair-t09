@@ -2,8 +2,9 @@
 
 ``Platform`` 把各组件按真实调用链接起来，并暴露四件事：启动
 顺序、停炉顺序、控制循环和状态快照。控制循环每个周期做六件事：按负荷与
-拉引量调整液面并按液面门控投料、按投料秤基线折算配比、维持燃烧与分区、
-按稳温结论决定闸板、走一遍成型循环、最后按退火曲线结算网带与加热功率。
+拉引量调整液面并按液面门控投料、确认投料秤基线就绪后折算配比、维持燃烧
+与分区、按稳温结论决定闸板、走一遍成型循环、最后按退火曲线结算网带与加
+热功率。
 """
 
 from __future__ import annotations
@@ -246,6 +247,7 @@ class Platform:
             if not self.scale.restore():
                 self.scale.recalibrate(0.0, self.clock.now())
             self.scale.require_durable()
+            self.scale.require_ready(self.clock.now())
             self._note(steps, "scale_baseline", epoch=self.scale.epoch)
 
             self.level.observe(self.config.furnace.level_target_mm - 24.0)
@@ -330,6 +332,7 @@ class Platform:
                 charge_kg = charge.batch_kg
                 self.level.drift(9.0 * state.dt)
 
+            self.scale.require_ready(self.clock.now())
             plan = self.mix.plan(self.scale.baseline())
             forehearth_c = self.forehearth_temp.setpoint_c - 3.0 * (1.0 - state.load)
             self.forehearth_temp.observe(forehearth_c)
@@ -411,7 +414,11 @@ class Platform:
                 raise SequenceError(f"未知的投料路径: {path}", component="batch")
             self.level.drift(9.0)
             payload = outcome.as_dict()
-            payload["weighed_kg"] = round(self.scale.weigh(outcome.batch_kg), 3)
+            # 模拟真实秤的读数：真实质量 + 标定偏移；残差喂给漂移监测窗口。
+            raw_kg = outcome.batch_kg + self.scale.offset_kg
+            payload["weighed_kg"] = round(
+                self.scale.weigh(raw_kg, reference_kg=outcome.batch_kg), 3
+            )
             return payload
 
     def interrupt_charging(self, reason: str) -> dict:
@@ -482,6 +489,7 @@ class Platform:
 
         with self._lock:
             baseline = self.scale.recalibrate(offset_kg, self.clock.now())
+            self.scale.require_ready(self.clock.now())
             plan = self.mix.plan(self.scale.baseline())
             return {
                 "baseline": baseline.as_dict(),
@@ -577,6 +585,7 @@ class Platform:
             "started": self._started,
             "level": self.level.snapshot(),
             "scale_durable": self.scale.is_durable(),
+            "scale_readiness": self.scale.readiness(self.clock.now()),
             "draft_negative": self.draft.is_negative(),
             "air_established": self.air.is_established(),
             "melt_temp_ok": self.furnace_temp.is_ok(),
@@ -676,7 +685,7 @@ class Platform:
             "ignition": self.igniter.snapshot(),
             "zones": self.zones.snapshot(),
             "trip": self.trip.snapshot(),
-            "scale": self.scale.snapshot(),
+            "scale": self.scale.snapshot(self.clock.now()),
             "charger": self.charger.snapshot(),
             "stability": self.stability.snapshot(),
             "forehearth": self.forehearth_temp.snapshot(),

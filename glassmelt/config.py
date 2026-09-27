@@ -302,6 +302,10 @@ class BatchLimits:
     scale_offset_max_kg: float
     mix_tolerance_pct: float
     charge_window_s: float
+    calibration_max_age_s: float
+    drift_warn_kg: float
+    drift_block_kg: float
+    drift_window: int
 
     @classmethod
     def from_mapping(cls, section: Mapping[str, Any]) -> "BatchLimits":
@@ -310,9 +314,17 @@ class BatchLimits:
             scale_offset_max_kg=_number(section, "scale_offset_max_kg", minimum=0.0),
             mix_tolerance_pct=_number(section, "mix_tolerance_pct", minimum=0.0),
             charge_window_s=_number(section, "charge_window_s", minimum=0.0),
+            calibration_max_age_s=_number(section, "calibration_max_age_s", minimum=0.0),
+            drift_warn_kg=_number(section, "drift_warn_kg", minimum=0.0),
+            drift_block_kg=_number(section, "drift_block_kg", minimum=0.0),
+            drift_window=int(_number(section, "drift_window", minimum=1.0)),
         )
         if limits.charge_batch_kg <= 0:
             raise ConfigError("单次投料量必须为正", component="config")
+        if limits.calibration_max_age_s <= 0:
+            raise ConfigError("标定有效期必须为正", component="config")
+        if not 0.0 < limits.drift_warn_kg < limits.drift_block_kg:
+            raise ConfigError("漂移阈值必须满足 0 < 告警阈值 < 阻断阈值", component="config")
         return limits
 
     def offset_ok(self, offset_kg: float) -> bool:
@@ -324,6 +336,16 @@ class BatchLimits:
         """配比偏差是否在公差内。"""
 
         return abs(float(deviation_pct)) <= self.mix_tolerance_pct
+
+    def drift_level(self, drift_kg: float) -> str:
+        """按漂移量分级：``ok`` 正常、``warn`` 提醒重新标定、``block`` 挡住配比。"""
+
+        magnitude = abs(float(drift_kg))
+        if magnitude >= self.drift_block_kg:
+            return "block"
+        if magnitude >= self.drift_warn_kg:
+            return "warn"
+        return "ok"
 
 
 @dataclass(frozen=True)
@@ -450,6 +472,10 @@ def default_config() -> PlatformConfig:
             scale_offset_max_kg=12.0,
             mix_tolerance_pct=1.5,
             charge_window_s=180.0,
+            calibration_max_age_s=2_592_000.0,
+            drift_warn_kg=1.5,
+            drift_block_kg=4.0,
+            drift_window=8,
         ),
         pages=("overview", "operations", "records"),
     )
@@ -516,6 +542,10 @@ def config_to_mapping(cfg: PlatformConfig) -> dict:
                 "scale_offset_max_kg": cfg.batch.scale_offset_max_kg,
                 "mix_tolerance_pct": cfg.batch.mix_tolerance_pct,
                 "charge_window_s": cfg.batch.charge_window_s,
+                "calibration_max_age_s": cfg.batch.calibration_max_age_s,
+                "drift_warn_kg": cfg.batch.drift_warn_kg,
+                "drift_block_kg": cfg.batch.drift_block_kg,
+                "drift_window": cfg.batch.drift_window,
             },
         },
         "pages": list(cfg.pages),

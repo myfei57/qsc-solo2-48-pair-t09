@@ -47,6 +47,10 @@ limits:
     scale_offset_max_kg: 12.0
     mix_tolerance_pct: 1.5
     charge_window_s: 180.0
+    calibration_max_age_s: 2592000.0
+    drift_warn_kg: 1.5
+    drift_block_kg: 4.0
+    drift_window: 8
 pages:
   - overview
   - operations
